@@ -4,7 +4,7 @@ const qrcode = require('qrcode-terminal')
 const { Client, LocalAuth } = require('whatsapp-web.js')
 
 const user = '@180732777492705'
-const blacklistMessage = ['maen','main','epep','mcgg']
+const blacklistMessage = ['maen', 'main', 'epep', 'mcgg']
 
 const app = express()
 
@@ -35,16 +35,33 @@ client.on('ready', () => { console.log('User connected...') })
 client.on('message', async message => {
     const messageBody = message.body
 
-    if (messageBody.includes('@all') && !blacklistMessage.some(kata => messageBody.includes(kata))){
+    if (messageBody.includes('@all') && !blacklistMessage.some(kata => messageBody.includes(kata))) {
         message.reply('Penyakit tag all gila')
     }
     else if (messageBody.startsWith(user)) {
         message.reply(await getBotResponse(messageBody.substring(16)))
     }
-    else if (messageBody.toLowerCase().startsWith('hai sylvia')){
+    else if (messageBody.toLowerCase().startsWith('hai sylvia')) {
         message.reply(await getBotResponse(messageBody))
     }
 })
+
+client.on('message', async (msg) => {
+    if (msg.hasMedia && msg.type === 'image') {
+        try {
+            const media = await msg.downloadMedia();
+
+            await client.sendMessage(msg.from, media, {
+                sendMediaAsSticker: true,
+                stickerName: "Sylvia Sticker Maker",
+                stickerAuthor: msg.author
+            });
+        } catch (err) {
+            console.error("Gagal convert stiker:", err);
+        }
+    }
+});
+
 
 client.initialize()
 
