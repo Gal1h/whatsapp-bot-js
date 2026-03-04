@@ -50,7 +50,8 @@ client.on('message', async (msg) => {
     if (msg.hasMedia && msg.type === 'image') {
         try {
             const media = await msg.downloadMedia();
-
+            // if (message.body.toLowerCase().startsWith('.s'))
+            console.log(msg.body)
             await client.sendMessage(msg.from, media, {
                 sendMediaAsSticker: true,
                 stickerName: "Sylvia Sticker Maker",
