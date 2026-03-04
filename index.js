@@ -1,7 +1,7 @@
 const express = require('express')
 const axios = require('axios')
 const qrcode = require('qrcode-terminal')
-const {Client, LocalAuth} = require('whatsapp-web.js')
+const { Client, LocalAuth } = require('whatsapp-web.js')
 
 const user = '@180732777492705'
 
@@ -9,20 +9,31 @@ const app = express()
 
 
 const client = new Client({
-    authStrategy: new LocalAuth({clientId: 'Sylvia'})
+    authStrategy: new LocalAuth({ clientId: 'Sylvia' }),
+    puppeteer: {
+        headless: true,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--disable-gpu'
+        ]
+    }
 })
-
 client.on('qr', qr => {
-    qrcode.generate(qr,{
-        small:true
+    qrcode.generate(qr, {
+        small: true
     })
 })
-client.on('authenticated', ()=>{console.log('scanning...')})
-client.on('ready',()=>{console.log('User connected...')})
+client.on('authenticated', () => { console.log('scanning...') })
+client.on('ready', () => { console.log('User connected...') })
 
-client.on('message', async message =>{
+client.on('message', async message => {
     const messageBody = message.body
-    if (messageBody.startsWith(user)){
+    if (messageBody.startsWith(user)) {
         message.reply(await getBotResponse(messageBody.substring(16)))
     }
 })
