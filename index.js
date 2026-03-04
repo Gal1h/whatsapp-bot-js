@@ -36,6 +36,10 @@ client.on('message', async message => {
     if (messageBody.startsWith(user)) {
         message.reply(await getBotResponse(messageBody.substring(16)))
     }
+    else if (messageBody.toLocaleLowerCase.startsWith('hai elysia')){
+        message.reply(await getBotResponse(messageBody))
+
+    }
 })
 
 client.initialize()
