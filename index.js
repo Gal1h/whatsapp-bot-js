@@ -32,7 +32,7 @@ client.on('qr', qr => {
 client.on('authenticated', () => { console.log('scanning...') })
 client.on('ready', () => { console.log('User connected...') })
 
-client.on('message', async message => {
+client.on('message_create', async message => {
     const messageBody = message.body
 
     if (messageBody.includes('@all') && !blacklistMessage.some(kata => messageBody.includes(kata))) {
@@ -46,7 +46,7 @@ client.on('message', async message => {
     }
 })
 
-client.on('message', async (msg) => {
+client.on('message_create', async (msg) => {
     if (msg.hasMedia && msg.type === 'image') {
         try {
             const media = await msg.downloadMedia();
