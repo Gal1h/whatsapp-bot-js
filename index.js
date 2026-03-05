@@ -99,7 +99,12 @@ const getBotResponse = async (userPrompt, userId) => {
             }
         }
 
-        const userMemory = allMemory[userId] || { nama: "User", ringkasan: "Belum ada informasi khusus." };
+        const userMemory = allMemory[userId] || {
+            nama: "User",
+            ringkasan: "Belum ada informasi khusus.",
+            fakta: [],
+            totalChat: 0
+        };
 
         // FIX 4: tambah timeout untuk request Ollama
         const response = await axios.post('http://localhost:11434/api/chat', {
@@ -139,26 +144,45 @@ const getBotResponse = async (userPrompt, userId) => {
 
 async function updateUserMemory(userId, oldUserMemory, prompt, reply) {
     try {
-        // FIX 6: tambah timeout + validasi response dari /api/generate
+        // Susun prompt agar model MERGE (akumulasi) bukan replace
+        const mergePrompt = `
+Kamu adalah sistem memori AI. Tugasmu adalah memperbarui ingatan tentang seorang user secara AKUMULATIF.
+
+INGATAN LAMA:
+${JSON.stringify(oldUserMemory, null, 2)}
+
+CHAT BARU:
+User: "${prompt}"
+Sylvia: "${reply}"
+
+INSTRUKSI:
+- Pertahankan semua informasi lama yang masih relevan
+- Tambahkan informasi baru dari chat di atas (nama, hobi, fakta, preferensi, dll)
+- Perbarui ringkasan agar mencakup semua yang sudah diketahui
+- Jangan hapus fakta lama kecuali user secara eksplisit mengoreksinya
+- Field "fakta" adalah array string berisi fakta-fakta penting tentang user
+- Field "totalChat" tambahkan 1 dari nilai lama
+
+Balas HANYA dengan JSON murni, tanpa markdown, tanpa penjelasan:
+{"nama": "...", "ringkasan": "...", "fakta": ["...", "..."], "totalChat": 0}
+`;
+
         const update = await axios.post('http://localhost:11434/api/generate', {
             model: 'Sylvia',
-            prompt: `Ingatan lama user ${userId}: ${JSON.stringify(oldUserMemory)}. 
-                     Chat baru: "${prompt}". Jawabanmu: "${reply}". 
-                     Ekstrak informasi penting (seperti nama jika dia menyebutkan, hobi, atau fakta baru) dan gabungkan dengan ingatan lama. 
-                     Berikan hasil dalam format JSON murni tanpa markdown, tanpa komentar: {"nama": "...", "ringkasan": "..."}`,
+            prompt: mergePrompt,
             format: "json",
             stream: false
         }, {
             timeout: 60000
         });
 
-        // FIX 7: validasi response.data.response sebelum di-parse
+        // Validasi response tidak kosong
         if (!update.data || !update.data.response || !update.data.response.trim()) {
             console.error('Response update memori kosong untuk userId:', userId);
             return;
         }
 
-        // FIX 8: bersihkan kemungkinan markdown fence dari response
+        // Bersihkan markdown fence jika ada
         let rawJson = update.data.response.trim();
         rawJson = rawJson.replace(/```json|```/g, '').trim();
 
@@ -166,11 +190,22 @@ async function updateUserMemory(userId, oldUserMemory, prompt, reply) {
         try {
             newMemory = JSON.parse(rawJson);
         } catch (parseErr) {
-            console.error('Gagal parse update memori:', parseErr.message, '| Raw:', rawJson.substring(0, 200));
+            console.error('Gagal parse update memori:', parseErr.message, '| Raw:', rawJson.substring(0, 300));
             return;
         }
 
-        // FIX 9: baca ulang file dengan validasi, hindari race condition
+        // Pastikan field totalChat selalu bertambah, bukan diganti sembarangan
+        const oldTotal = oldUserMemory.totalChat || 0;
+        if (!newMemory.totalChat || newMemory.totalChat <= oldTotal) {
+            newMemory.totalChat = oldTotal + 1;
+        }
+
+        // Pastikan field fakta adalah array
+        if (!Array.isArray(newMemory.fakta)) {
+            newMemory.fakta = oldUserMemory.fakta || [];
+        }
+
+        // Baca ulang file (hindari race condition), lalu tulis
         let allMemory = {};
         if (fs.existsSync(filePath)) {
             const content = fs.readFileSync(filePath, 'utf8').trim();
@@ -185,7 +220,7 @@ async function updateUserMemory(userId, oldUserMemory, prompt, reply) {
 
         allMemory[userId] = newMemory;
         fs.writeFileSync(filePath, JSON.stringify(allMemory, null, 2));
-        console.log(`Memori user ${userId} berhasil diupdate.`);
+        console.log(`Memori user ${userId} diupdate. Total chat: ${newMemory.totalChat}`);
     } catch (e) {
         console.error('updateUserMemory gagal:', e.message);
     }
