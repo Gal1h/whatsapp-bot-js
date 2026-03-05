@@ -1,3 +1,4 @@
+const fs = require('fs');
 const express = require('express')
 const axios = require('axios')
 const qrcode = require('qrcode-terminal')
@@ -7,7 +8,6 @@ const user = '@180732777492705'
 const blacklistMessage = ['maen', 'main', 'epep', 'mcgg']
 
 const app = express()
-
 
 const client = new Client({
     authStrategy: new LocalAuth({ clientId: 'Sylvia' }),
@@ -24,11 +24,7 @@ const client = new Client({
         ]
     }
 })
-client.on('qr', qr => {
-    qrcode.generate(qr, {
-        small: true
-    })
-})
+client.on('qr', qr => { qrcode.generate(qr, { small: true }) })
 client.on('authenticated', () => { console.log('scanning...') })
 client.on('ready', () => { console.log('User connected...') })
 
@@ -50,7 +46,7 @@ client.on('message_create', async (msg) => {
     if (msg.hasMedia && msg.type === 'image') {
         try {
             const media = await msg.downloadMedia();
-            if (msg.body.toLowerCase().startsWith('.s')){
+            if (msg.body.toLowerCase().startsWith('.s')) {
                 await client.sendMessage(msg.from, media, {
                     sendMediaAsSticker: true,
                     stickerName: "Sylvia Sticker Maker",
@@ -67,28 +63,45 @@ client.on('message_create', async (msg) => {
 client.initialize()
 
 const getBotResponse = async (userPrompt) => {
+    const filePath = 'memory.json'; 
+
     try {
-        const response = await axios.post('http://localhost:11434/api/generate', {
+        let memory = fs.existsSync(filePath) 
+            ? JSON.parse(fs.readFileSync(filePath)) 
+            : { ringkasan: "" };
+
+        const response = await axios.post('http://localhost:11434/api/chat', {
             model: 'Sylvia',
-            prompt: userPrompt,
+            stream: false,
+            messages: [
+                {
+                    role: 'system',
+                    content: `Kamu adalah Sylvia. Ingatanmu saat ini: ${memory.ringkasan}`
+                },
+                {
+                    role: 'user',
+                    content: userPrompt
+                }
+            ],
+        });
+
+        const aiReply = response.data.message.content; 
+
+        const updateRequest = await axios.post('http://localhost:11434/api/generate', {
+            model: 'Sylvia',
+            prompt: `Data lama: ${memory.ringkasan}. 
+                     Percakapan baru: User bilang "${userPrompt}" dan kamu jawab "${aiReply}".
+                     Tuliskan ringkasan ingatan baru yang menggabungkan informasi penting di atas (maksimal 2 kalimat):`,
             stream: false
         });
-        // const webSearch = await axios.post('https://ollama.com/api/web_search', {
-        //     query: userPrompt,
-        //     max_results: 3
-        // }, {
-        //     headers: {
-        //         'Authorization': `Bearer b9d5bb081e614bfb9e8bce6e68a6117d.aQWqJ3ffAZ0kQ3ObdtY_QOsA`,
-        //         'Content-Type': 'application/json'
-        //     }
-        // });
 
-        const content = response.data.response;
+        memory.ringkasan = updateRequest.data.response.trim();
+        fs.writeFileSync(filePath, JSON.stringify(memory, null, 2));
 
-
-        return content;
+        return aiReply; 
     } catch (error) {
         console.error('Error connecting to Ollama:', error.message);
+        return "Maaf, sistem sedang sibuk.";
     }
 }
 
