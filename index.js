@@ -27,6 +27,16 @@ client.on('ready', () => console.log('Sylvia is ready!'));
 
 client.on('message_create', async (msg) => {
     const body = msg.body || "";
+    const contact = await msg.getContact();
+    const chat = await msg.getChat();
+    let userName;
+    if (chat.isGroup) {
+        const nama = contact.pushname || contact.name || 'Unknown';
+        userName = nama
+    } else {
+        const nama = contact.name || contact.pushname || 'Unknown';
+        userName = nama
+    }
 
     // Stiker: download media dengan retry + timeout
     if (msg.hasMedia && msg.type === 'image' && body.toLowerCase().startsWith('.s')) {
@@ -76,7 +86,7 @@ client.on('message_create', async (msg) => {
     }
 
     if (prompt) {
-        const response = await getBotResponse(prompt, userId);
+        const response = await getBotResponse(prompt, userId, userName);
         msg.reply(response);
     }
 });
@@ -105,18 +115,9 @@ function extractNameFromText(text) {
 }
 
 
-const getBotResponse = async (userPrompt, userId) => {
+const getBotResponse = async (userPrompt, userId, userName) => {
     try {
-        const contact = await msg.getContact();
-        const chat = await msg.getChat();
-        let userName;
-        if (chat.isGroup) {
-            const nama = contact.pushname || contact.name || 'Unknown';
-            userName = nama
-        } else {
-            const nama = contact.name || contact.pushname || 'Unknown';
-            userName = nama
-        }
+
 
         let allMemory = {};
         if (fs.existsSync(filePath)) {
@@ -286,12 +287,12 @@ Balas HANYA JSON murni tanpa markdown tanpa penjelasan:
         ? summary.nama
         : existing.nama;
 
-        allMemory[userId] = {
-            ...existing,
-            nama: finalNama,
-            ringkasan: summary.ringkasan || existing.ringkasan,
-            fakta: Array.isArray(summary.fakta) ? summary.fakta : existing.fakta,
-        };
+    allMemory[userId] = {
+        ...existing,
+        nama: finalNama,
+        ringkasan: summary.ringkasan || existing.ringkasan,
+        fakta: Array.isArray(summary.fakta) ? summary.fakta : existing.fakta,
+    };
 
     fs.writeFileSync(filePath, JSON.stringify(allMemory, null, 2));
     console.log(`Ringkasan memori user ${userId} diperbarui Ollama. Nama: ${finalNama}`);
