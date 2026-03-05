@@ -1,115 +1,97 @@
 const fs = require('fs');
-const express = require('express')
-const axios = require('axios')
-const qrcode = require('qrcode-terminal')
-const { Client, LocalAuth } = require('whatsapp-web.js')
+const express = require('express');
+const axios = require('axios');
+const qrcode = require('qrcode-terminal');
+const { Client, LocalAuth } = require('whatsapp-web.js');
 
-const user = '@180732777492705'
-const blacklistMessage = ['maen', 'main', 'epep', 'mcgg']
+const userPrefix = '@180732777492705';
+const blacklistMessage = ['maen', 'main', 'epep', 'mcgg'];
+const filePath = 'memory.json';
 
-const app = express()
+const app = express();
 
 const client = new Client({
     authStrategy: new LocalAuth({ clientId: 'Sylvia' }),
     puppeteer: {
         headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--disable-gpu'
-        ]
-    }
-})
-client.on('qr', qr => { qrcode.generate(qr, { small: true }) })
-client.on('authenticated', () => { console.log('scanning...') })
-client.on('ready', () => { console.log('User connected...') })
-
-client.on('message_create', async message => {
-    const messageBody = message.body
-
-    if (messageBody.includes('@all') && !blacklistMessage.some(kata => messageBody.includes(kata))) {
-        message.reply('Penyakit tag all gila')
-    }
-    else if (messageBody.startsWith(user)) {
-        message.reply(await getBotResponse(messageBody.substring(16)))
-    }
-    else if (messageBody.toLowerCase().startsWith('hai sylvia')) {
-        message.reply(await getBotResponse(messageBody))
-    }
-})
-
-client.on('message_create', async (msg) => {
-    if (msg.hasMedia && msg.type === 'image') {
-        try {
-            const media = await msg.downloadMedia();
-            if (msg.body.toLowerCase().startsWith('.s')) {
-                await client.sendMessage(msg.from, media, {
-                    sendMediaAsSticker: true,
-                    stickerName: "Sylvia Sticker Maker",
-                    stickerAuthor: msg.author
-                });
-            }
-        } catch (err) {
-            console.error("Gagal convert stiker:", err);
-        }
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     }
 });
 
+client.on('qr', qr => qrcode.generate(qr, { small: true }));
+client.on('ready', () => console.log('Sylvia is ready!'));
 
-client.initialize()
+client.on('message_create', async (msg) => {
+    const body = msg.body || "";
+
+    if (msg.hasMedia && msg.type === 'image' && body.toLowerCase().startsWith('.s')) {
+        try {
+            const media = await msg.downloadMedia();
+            await client.sendMessage(msg.from, media, {
+                sendMediaAsSticker: true,
+                stickerName: "Sylvia Sticker",
+                stickerAuthor: "Sylvia AI"
+            });
+            return;
+        } catch (err) {
+            console.error("Gagal convert stiker:", err.message);
+        }
+    }
+
+    if (body.includes('@all') && !blacklistMessage.some(kata => body.toLowerCase().includes(kata))) {
+        return msg.reply('Penyakit tag all gila');
+    }
+
+    let prompt = "";
+    if (body.startsWith(userPrefix)) {
+        prompt = body.substring(userPrefix.length).trim();
+    } else if (body.toLowerCase().startsWith('hai sylvia')) {
+        prompt = body;
+    }
+
+    if (prompt) {
+        const response = await getBotResponse(prompt);
+        msg.reply(response);
+    }
+});
 
 const getBotResponse = async (userPrompt) => {
-    const filePath = 'memory.json'; 
-
     try {
-        let memory = fs.existsSync(filePath) 
-            ? JSON.parse(fs.readFileSync(filePath)) 
-            : { ringkasan: "" };
+        let memory = { ringkasan: "" };
+        if (fs.existsSync(filePath)) {
+            const content = fs.readFileSync(filePath, 'utf8').trim();
+            if (content) memory = JSON.parse(content);
+        }
 
         const response = await axios.post('http://localhost:11434/api/chat', {
             model: 'Sylvia',
             stream: false,
             messages: [
-                {
-                    role: 'system',
-                    content: `Kamu adalah Sylvia. Ingatanmu saat ini: ${memory.ringkasan}`
-                },
-                {
-                    role: 'user',
-                    content: userPrompt
-                }
+                { role: 'system', content: `Kamu adalah Sylvia. Ingatanmu: ${memory.ringkasan}` },
+                { role: 'user', content: userPrompt }
             ],
         });
 
-        const aiReply = response.data.message.content; 
+        const aiReply = response.data.message.content;
 
-        const updateRequest = await axios.post('http://localhost:11434/api/generate', {
-            model: 'Sylvia',
-            prompt: `Data lama: ${memory.ringkasan}. 
-                     Percakapan baru: User bilang "${userPrompt}" dan kamu jawab "${aiReply}".
-                     Tuliskan ringkasan ingatan baru yang menggabungkan informasi penting di atas (maksimal 2 kalimat):`,
-            stream: false
-        });
+        updateMemory(memory.ringkasan, userPrompt, aiReply).catch(e => console.error("Memory Error:", e.message));
 
-        memory.ringkasan = updateRequest.data.response.trim();
-        fs.writeFileSync(filePath, JSON.stringify(memory, null, 2));
-
-        return aiReply; 
+        return aiReply;
     } catch (error) {
-        console.error('Error connecting to Ollama:', error.message);
-        return "Maaf, sistem sedang sibuk.";
+        console.error('Ollama Error:', error.message);
+        return "Maaf, otak aku lagi loading...";
     }
+};
+
+async function updateMemory(oldSummary, prompt, reply) {
+    const update = await axios.post('http://localhost:11434/api/generate', {
+        model: 'Sylvia',
+        prompt: `Data lama: ${oldSummary}. Percakapan baru: User: "${prompt}", AI: "${reply}". Ringkas ingatan ini jadi 1-2 kalimat saja untuk disimpan:`,
+        stream: false
+    });
+    const newSummary = { ringkasan: update.data.response.trim() };
+    fs.writeFileSync(filePath, JSON.stringify(newSummary, null, 2));
 }
 
-
-
-
-// getBotResponse('tanggal berapa hari ini?')
-
-app.listen(8000, () => {
-    console.log('Server running on http://localhost:8000')
-})
+client.initialize();
+app.listen(8000, () => console.log('Server running on port 8000'));
