@@ -9,6 +9,9 @@ const blacklistMessage = ['maen', 'main', 'epep', 'mcgg'];
 const path = require('path');
 const filePath = path.join(__dirname, 'memory.json');
 
+// Setiap N chat, baru minta Ollama buat ringkasan (hemat resource VPS)
+const SUMMARIZE_EVERY = 5;
+
 const app = express();
 
 const client = new Client({
@@ -25,7 +28,7 @@ client.on('ready', () => console.log('Sylvia is ready!'));
 client.on('message_create', async (msg) => {
     const body = msg.body || "";
 
-    // FIX 1: downloadMedia — tambah retry + timeout handling
+    // Stiker: download media dengan retry + timeout
     if (msg.hasMedia && msg.type === 'image' && body.toLowerCase().startsWith('.s')) {
         try {
             let media = null;
@@ -43,12 +46,10 @@ client.on('message_create', async (msg) => {
                     if (attempt < 3) await new Promise(r => setTimeout(r, 2000));
                 }
             }
-
             if (!media) {
                 await msg.reply('Gagal download gambar, coba kirim ulang.');
                 return;
             }
-
             await client.sendMessage(msg.from, media, {
                 sendMediaAsSticker: true,
                 stickerName: "Sylvia Sticker",
@@ -65,7 +66,6 @@ client.on('message_create', async (msg) => {
         return msg.reply('Penyakit tag all gila');
     }
 
-    // FIX 2: userId seharusnya diambil dari msg.from, bukan undefined
     const userId = msg.from;
 
     let prompt = "";
@@ -76,7 +76,6 @@ client.on('message_create', async (msg) => {
     }
 
     if (prompt) {
-        // FIX 3: pass userId yang benar ke getBotResponse
         const response = await getBotResponse(prompt, userId);
         msg.reply(response);
     }
@@ -85,17 +84,12 @@ client.on('message_create', async (msg) => {
 
 const getBotResponse = async (userPrompt, userId) => {
     try {
-        // Baca Database Memori
         let allMemory = {};
         if (fs.existsSync(filePath)) {
             const content = fs.readFileSync(filePath, 'utf8').trim();
             if (content) {
-                try {
-                    allMemory = JSON.parse(content);
-                } catch (e) {
-                    console.error('Memory file corrupt, reset:', e.message);
-                    allMemory = {};
-                }
+                try { allMemory = JSON.parse(content); }
+                catch (e) { console.error('Memory file corrupt, reset:', e.message); }
             }
         }
 
@@ -103,25 +97,23 @@ const getBotResponse = async (userPrompt, userId) => {
             nama: "User",
             ringkasan: "Belum ada informasi khusus.",
             fakta: [],
+            chatLog: [],
             totalChat: 0
         };
 
-        // FIX 4: tambah timeout untuk request Ollama
+        // Ollama ~14 detik untuk prompt pendek, set 120 detik agar aman
         const response = await axios.post('http://localhost:11434/api/chat', {
             model: 'Sylvia',
             stream: false,
             messages: [
                 {
                     role: 'system',
-                    content: `Kamu Sylvia. Kamu bicara dengan ID: ${userId}. Ingatanmu tentang dia: ${JSON.stringify(userMemory)}`
+                    content: `Kamu Sylvia. Kamu bicara dengan ID: ${userId}. Ingatanmu tentang dia — Nama: ${userMemory.nama}. Ringkasan: ${userMemory.ringkasan}. Fakta: ${JSON.stringify(userMemory.fakta)}`
                 },
                 { role: 'user', content: userPrompt }
             ],
-        }, {
-            timeout: 60000 // 60 detik timeout
-        });
+        }, { timeout: 120000 });
 
-        // FIX 5: validasi response sebelum akses .content
         if (!response.data || !response.data.message || !response.data.message.content) {
             console.error('Response Ollama tidak valid:', JSON.stringify(response.data));
             return "Aduh, jawaban Ollama kosong nih...";
@@ -129,7 +121,7 @@ const getBotResponse = async (userPrompt, userId) => {
 
         const aiReply = response.data.message.content;
 
-        // Update memori secara async (tidak blocking)
+        // Simpan memory — async, tidak blocking chat
         updateUserMemory(userId, userMemory, userPrompt, aiReply).catch(e =>
             console.error('updateUserMemory error:', e.message)
         );
@@ -142,89 +134,122 @@ const getBotResponse = async (userPrompt, userId) => {
 };
 
 
+// Langkah 1: simpan chat log dulu ke file (murni JS, tidak ada network — tidak bisa timeout)
+// Langkah 2: setiap SUMMARIZE_EVERY chat, baru panggil Ollama untuk buat ringkasan
 async function updateUserMemory(userId, oldUserMemory, prompt, reply) {
     try {
-        // Susun prompt agar model MERGE (akumulasi) bukan replace
-        const mergePrompt = `
-Kamu adalah sistem memori AI. Tugasmu adalah memperbarui ingatan tentang seorang user secara AKUMULATIF.
-
-INGATAN LAMA:
-${JSON.stringify(oldUserMemory, null, 2)}
-
-CHAT BARU:
-User: "${prompt}"
-Sylvia: "${reply}"
-
-INSTRUKSI:
-- Pertahankan semua informasi lama yang masih relevan
-- Tambahkan informasi baru dari chat di atas (nama, hobi, fakta, preferensi, dll)
-- Perbarui ringkasan agar mencakup semua yang sudah diketahui
-- Jangan hapus fakta lama kecuali user secara eksplisit mengoreksinya
-- Field "fakta" adalah array string berisi fakta-fakta penting tentang user
-- Field "totalChat" tambahkan 1 dari nilai lama
-
-Balas HANYA dengan JSON murni, tanpa markdown, tanpa penjelasan:
-{"nama": "...", "ringkasan": "...", "fakta": ["...", "..."], "totalChat": 0}
-`;
-
-        const update = await axios.post('http://localhost:11434/api/generate', {
-            model: 'Sylvia',
-            prompt: mergePrompt,
-            format: "json",
-            stream: false
-        }, {
-            timeout: 60000
-        });
-
-        // Validasi response tidak kosong
-        if (!update.data || !update.data.response || !update.data.response.trim()) {
-            console.error('Response update memori kosong untuk userId:', userId);
-            return;
-        }
-
-        // Bersihkan markdown fence jika ada
-        let rawJson = update.data.response.trim();
-        rawJson = rawJson.replace(/```json|```/g, '').trim();
-
-        let newMemory;
-        try {
-            newMemory = JSON.parse(rawJson);
-        } catch (parseErr) {
-            console.error('Gagal parse update memori:', parseErr.message, '| Raw:', rawJson.substring(0, 300));
-            return;
-        }
-
-        // Pastikan field totalChat selalu bertambah, bukan diganti sembarangan
-        const oldTotal = oldUserMemory.totalChat || 0;
-        if (!newMemory.totalChat || newMemory.totalChat <= oldTotal) {
-            newMemory.totalChat = oldTotal + 1;
-        }
-
-        // Pastikan field fakta adalah array
-        if (!Array.isArray(newMemory.fakta)) {
-            newMemory.fakta = oldUserMemory.fakta || [];
-        }
-
-        // Baca ulang file (hindari race condition), lalu tulis
         let allMemory = {};
         if (fs.existsSync(filePath)) {
             const content = fs.readFileSync(filePath, 'utf8').trim();
             if (content) {
-                try {
-                    allMemory = JSON.parse(content);
-                } catch (e) {
-                    console.error('Memory file corrupt saat update, reset:', e.message);
-                }
+                try { allMemory = JSON.parse(content); }
+                catch (e) { console.error('Memory corrupt, reset:', e.message); }
             }
         }
 
-        allMemory[userId] = newMemory;
+        const mem = allMemory[userId] || {
+            nama: "User",
+            ringkasan: "Belum ada informasi khusus.",
+            fakta: [],
+            chatLog: [],
+            totalChat: 0
+        };
+
+        if (!Array.isArray(mem.chatLog)) mem.chatLog = [];
+        mem.chatLog.push({ user: prompt, sylvia: reply, ts: Date.now() });
+        mem.totalChat = (mem.totalChat || 0) + 1;
+
+        // Batasi log maksimal 50 entry agar file tidak membengkak
+        if (mem.chatLog.length > 50) mem.chatLog = mem.chatLog.slice(-50);
+
+        // Tulis ke file — ini selalu berhasil, tidak ada Ollama
+        allMemory[userId] = mem;
         fs.writeFileSync(filePath, JSON.stringify(allMemory, null, 2));
-        console.log(`Memori user ${userId} diupdate. Total chat: ${newMemory.totalChat}`);
+        console.log(`Chat log user ${userId} disimpan. Total chat: ${mem.totalChat}`);
+
+        // Setiap SUMMARIZE_EVERY chat, update ringkasan via Ollama (background)
+        if (mem.totalChat % SUMMARIZE_EVERY === 0) {
+            console.log(`Trigger summarize memori user ${userId} (chat ke-${mem.totalChat})...`);
+            summarizeMemory(userId, mem).catch(e =>
+                console.error('summarizeMemory non-fatal error:', e.message)
+            );
+        }
     } catch (e) {
         console.error('updateUserMemory gagal:', e.message);
     }
 }
+
+
+// Dipanggil setiap N chat — kalau timeout tidak apa-apa, chatLog tetap tersimpan
+async function summarizeMemory(userId, mem) {
+    const recentLog = mem.chatLog.slice(-SUMMARIZE_EVERY)
+        .map(c => `User: ${c.user}\nSylvia: ${c.sylvia}`)
+        .join('\n---\n');
+
+    const mergePrompt = `Kamu adalah sistem memori AI. Tugasmu memperbarui ingatan user secara AKUMULATIF.
+
+INGATAN LAMA:
+Nama: ${mem.nama}
+Ringkasan: ${mem.ringkasan}
+Fakta: ${JSON.stringify(mem.fakta)}
+
+CHAT TERBARU:
+${recentLog}
+
+INSTRUKSI:
+- Pertahankan semua informasi lama yang masih relevan
+- Tambahkan informasi baru (nama, hobi, preferensi, fakta penting)
+- Jangan hapus fakta lama kecuali user mengoreksinya
+- "fakta" adalah array string singkat, maksimal 10 item
+
+Balas HANYA JSON murni tanpa markdown tanpa penjelasan:
+{"nama": "...", "ringkasan": "...", "fakta": ["...", "..."]}`;
+
+    // 3 menit timeout — ini background task, boleh lama
+    const update = await axios.post('http://localhost:11434/api/generate', {
+        model: 'Sylvia',
+        prompt: mergePrompt,
+        format: "json",
+        stream: false
+    }, { timeout: 180000 });
+
+    if (!update.data || !update.data.response || !update.data.response.trim()) {
+        console.error('Summarize: response Ollama kosong, skip.');
+        return;
+    }
+
+    let rawJson = update.data.response.trim().replace(/```json|```/g, '').trim();
+
+    let summary;
+    try {
+        summary = JSON.parse(rawJson);
+    } catch (e) {
+        console.error('Summarize: gagal parse JSON:', e.message, '| Raw:', rawJson.substring(0, 200));
+        return;
+    }
+
+    // Baca ulang file, merge ringkasan baru — pertahankan chatLog & totalChat
+    let allMemory = {};
+    if (fs.existsSync(filePath)) {
+        const content = fs.readFileSync(filePath, 'utf8').trim();
+        if (content) {
+            try { allMemory = JSON.parse(content); }
+            catch (e) { allMemory = {}; }
+        }
+    }
+
+    const existing = allMemory[userId] || mem;
+    allMemory[userId] = {
+        ...existing,
+        nama: summary.nama || existing.nama,
+        ringkasan: summary.ringkasan || existing.ringkasan,
+        fakta: Array.isArray(summary.fakta) ? summary.fakta : existing.fakta,
+    };
+
+    fs.writeFileSync(filePath, JSON.stringify(allMemory, null, 2));
+    console.log(`Ringkasan memori user ${userId} diperbarui Ollama. Total chat: ${existing.totalChat}`);
+}
+
 
 client.initialize();
 app.listen(8000, () => console.log('Server running on port 8000'));
