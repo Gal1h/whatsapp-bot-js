@@ -82,6 +82,29 @@ client.on('message_create', async (msg) => {
 });
 
 
+// Deteksi nama dari teks chat secara sederhana
+function extractNameFromText(text) {
+    const patterns = [
+        /nama(?:ku|saya|ku adalah|saya adalah| adalah| aku| gue| gw)[\s:]+([A-Za-z]+)/i,
+        /(?:panggil|sebut|call)(?:\s+aku|\s+saya|\s+gue|\s+gw)?[\s:]+([A-Za-z]+)/i,
+        /aku(?:\s+adalah)?[\s:]+([A-Za-z]+)/i,
+        /saya(?:\s+adalah)?[\s:]+([A-Za-z]+)/i,
+        /(?:perkenalkan|perkenalkan,?\s+)?aku\s+([A-Za-z]+)/i,
+    ];
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match && match[1] && match[1].length > 1) {
+            // Hindari false positive kata umum
+            const skip = ['adalah', 'dari', 'yang', 'dan', 'ini', 'itu', 'mau', 'bisa', 'user', 'bot'];
+            if (!skip.includes(match[1].toLowerCase())) {
+                return match[1];
+            }
+        }
+    }
+    return null;
+}
+
+
 const getBotResponse = async (userPrompt, userId) => {
     try {
         let allMemory = {};
@@ -134,8 +157,6 @@ const getBotResponse = async (userPrompt, userId) => {
 };
 
 
-// Langkah 1: simpan chat log dulu ke file (murni JS, tidak ada network — tidak bisa timeout)
-// Langkah 2: setiap SUMMARIZE_EVERY chat, baru panggil Ollama untuk buat ringkasan
 async function updateUserMemory(userId, oldUserMemory, prompt, reply) {
     try {
         let allMemory = {};
@@ -156,16 +177,25 @@ async function updateUserMemory(userId, oldUserMemory, prompt, reply) {
         };
 
         if (!Array.isArray(mem.chatLog)) mem.chatLog = [];
+        if (!Array.isArray(mem.fakta)) mem.fakta = [];
+
         mem.chatLog.push({ user: prompt, sylvia: reply, ts: Date.now() });
         mem.totalChat = (mem.totalChat || 0) + 1;
 
-        // Batasi log maksimal 50 entry agar file tidak membengkak
+        // Batasi log maksimal 50 entry
         if (mem.chatLog.length > 50) mem.chatLog = mem.chatLog.slice(-50);
+
+        // Deteksi nama langsung dari teks — tidak perlu tunggu Ollama
+        const detectedName = extractNameFromText(prompt);
+        if (detectedName && mem.nama === 'User') {
+            mem.nama = detectedName;
+            console.log(`Nama user ${userId} terdeteksi langsung: ${detectedName}`);
+        }
 
         // Tulis ke file — ini selalu berhasil, tidak ada Ollama
         allMemory[userId] = mem;
         fs.writeFileSync(filePath, JSON.stringify(allMemory, null, 2));
-        console.log(`Chat log user ${userId} disimpan. Total chat: ${mem.totalChat}`);
+        console.log(`Chat log user ${userId} disimpan. Total chat: ${mem.totalChat}, Nama: ${mem.nama}`);
 
         // Setiap SUMMARIZE_EVERY chat, update ringkasan via Ollama (background)
         if (mem.totalChat % SUMMARIZE_EVERY === 0) {
@@ -201,6 +231,7 @@ INSTRUKSI:
 - Tambahkan informasi baru (nama, hobi, preferensi, fakta penting)
 - Jangan hapus fakta lama kecuali user mengoreksinya
 - "fakta" adalah array string singkat, maksimal 10 item
+- Jika nama sudah diketahui, pertahankan nama tersebut
 
 Balas HANYA JSON murni tanpa markdown tanpa penjelasan:
 {"nama": "...", "ringkasan": "...", "fakta": ["...", "..."]}`;
@@ -239,15 +270,21 @@ Balas HANYA JSON murni tanpa markdown tanpa penjelasan:
     }
 
     const existing = allMemory[userId] || mem;
+
+    // Jangan timpa nama yang sudah benar dengan "User"
+    const finalNama = (summary.nama && summary.nama !== 'User')
+        ? summary.nama
+        : existing.nama;
+
     allMemory[userId] = {
         ...existing,
-        nama: summary.nama || existing.nama,
+        nama: finalNama,
         ringkasan: summary.ringkasan || existing.ringkasan,
         fakta: Array.isArray(summary.fakta) ? summary.fakta : existing.fakta,
     };
 
     fs.writeFileSync(filePath, JSON.stringify(allMemory, null, 2));
-    console.log(`Ringkasan memori user ${userId} diperbarui Ollama. Total chat: ${existing.totalChat}`);
+    console.log(`Ringkasan memori user ${userId} diperbarui Ollama. Nama: ${finalNama}`);
 }
 
 
