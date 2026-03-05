@@ -169,7 +169,7 @@ const getBotResponse = async (userPrompt, userId, userName) => {
 };
 
 
-async function updateUserMemory(userId, oldUserMemory, prompt, reply) {
+async function updateUserMemory(userId, oldUserMemory, prompt, reply, userName) {
     try {
         let allMemory = {};
         if (fs.existsSync(filePath)) {
@@ -181,7 +181,7 @@ async function updateUserMemory(userId, oldUserMemory, prompt, reply) {
         }
 
         const mem = allMemory[userId] || {
-            nama: "User",
+            nama: userName || "User",
             ringkasan: "Belum ada informasi khusus.",
             fakta: [],
             chatLog: [],
@@ -197,11 +197,11 @@ async function updateUserMemory(userId, oldUserMemory, prompt, reply) {
         // Batasi log maksimal 50 entry
         if (mem.chatLog.length > 50) mem.chatLog = mem.chatLog.slice(-50);
 
-        // Deteksi nama langsung dari teks — tidak perlu tunggu Ollama
         const detectedName = extractNameFromText(prompt);
-        if (detectedName && mem.nama === 'User') {
-            mem.nama = detectedName;
-            console.log(`Nama user ${userId} terdeteksi langsung: ${detectedName}`);
+        if (detectedName) {
+            mem.nama = detectedName; // User eksplisit bilang namanya
+        } else if (mem.nama === 'User' && userName) {
+            mem.nama = userName; // Pakai nama WhatsApp jika belum ada
         }
 
         // Tulis ke file — ini selalu berhasil, tidak ada Ollama
