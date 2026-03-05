@@ -55,42 +55,65 @@ client.on('message_create', async (msg) => {
     }
 });
 
-const getBotResponse = async (userPrompt) => {
+
+const getBotResponse = async (userPrompt, userId) => {
+    const filePath = 'memory.json';
     try {
-        let memory = { ringkasan: "" };
+        // 1. Baca Database Memori
+        let allMemory = {};
         if (fs.existsSync(filePath)) {
             const content = fs.readFileSync(filePath, 'utf8').trim();
-            if (content) memory = JSON.parse(content);
+            if (content) allMemory = JSON.parse(content);
         }
 
+        // 2. Ambil memori KHUSUS user ini, atau buat baru jika belum ada
+        let userMemory = allMemory[userId] || { nama: "User", ringkasan: "Belum ada informasi khusus." };
+
+        // 3. Request ke Sylvia dengan konteks Personal
         const response = await axios.post('http://localhost:11434/api/chat', {
             model: 'Sylvia',
             stream: false,
             messages: [
-                { role: 'system', content: `Kamu adalah Sylvia. Ingatanmu: ${memory.ringkasan}` },
+                { 
+                    role: 'system', 
+                    content: `Kamu Sylvia. Kamu bicara dengan ID: ${userId}. Ingatanmu tentang dia: ${JSON.stringify(userMemory)}` 
+                },
                 { role: 'user', content: userPrompt }
             ],
         });
 
         const aiReply = response.data.message.content;
 
-        updateMemory(memory.ringkasan, userPrompt, aiReply).catch(e => console.error("Memory Error:", e.message));
+        updateUserMemory(userId, userMemory, userPrompt, aiReply).catch(e => console.error(e));
 
         return aiReply;
     } catch (error) {
         console.error('Ollama Error:', error.message);
-        return "Maaf, otak aku lagi loading...";
+        return "Aduh, memoriku agak konslet...";
     }
 };
 
-async function updateMemory(oldSummary, prompt, reply) {
+
+async function updateUserMemory(userId, oldUserMemory, prompt, reply) {
+    const filePath = 'memory.json';
+    
     const update = await axios.post('http://localhost:11434/api/generate', {
         model: 'Sylvia',
-        prompt: `Data lama: ${oldSummary}. Percakapan baru: User: "${prompt}", AI: "${reply}". Ringkas ingatan ini jadi 1-2 kalimat saja untuk disimpan:`,
+        prompt: `Ingatan lama user ${userId}: ${JSON.stringify(oldUserMemory)}. 
+                 Chat baru: "${prompt}". Jawabanmu: "${reply}". 
+                 Ekstrak informasi penting (seperti nama jika dia menyebutkan, hobi, atau fakta baru) dan gabungkan dengan ingatan lama. 
+                 Berikan hasil dalam format JSON murni: {"nama": "...", "ringkasan": "..."}`,
+        format: "json",
         stream: false
     });
-    const newSummary = { ringkasan: update.data.response.trim() };
-    fs.writeFileSync(filePath, JSON.stringify(newSummary, null, 2));
+
+    try {
+        let allMemory = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        allMemory[userId] = JSON.parse(update.data.response);
+        fs.writeFileSync(filePath, JSON.stringify(allMemory, null, 2));
+    } catch (e) {
+        console.error("Gagal parse update memori:", e.message);
+    }
 }
 
 client.initialize();
