@@ -107,6 +107,17 @@ function extractNameFromText(text) {
 
 const getBotResponse = async (userPrompt, userId) => {
     try {
+        const contact = await msg.getContact();
+        const chat = await msg.getChat();
+        let userName;
+        if (chat.isGroup) {
+            const nama = contact.pushname || contact.name || 'Unknown';
+            userName = nama
+        } else {
+            const nama = contact.name || contact.pushname || 'Unknown';
+            userName = nama
+        }
+
         let allMemory = {};
         if (fs.existsSync(filePath)) {
             const content = fs.readFileSync(filePath, 'utf8').trim();
@@ -117,7 +128,7 @@ const getBotResponse = async (userPrompt, userId) => {
         }
 
         const userMemory = allMemory[userId] || {
-            nama: "User",
+            nama: userName,
             ringkasan: "Belum ada informasi khusus.",
             fakta: [],
             chatLog: [],
@@ -236,7 +247,6 @@ INSTRUKSI:
 Balas HANYA JSON murni tanpa markdown tanpa penjelasan:
 {"nama": "...", "ringkasan": "...", "fakta": ["...", "..."]}`;
 
-    // 3 menit timeout — ini background task, boleh lama
     const update = await axios.post('http://localhost:11434/api/generate', {
         model: 'Sylvia',
         prompt: mergePrompt,
@@ -276,12 +286,12 @@ Balas HANYA JSON murni tanpa markdown tanpa penjelasan:
         ? summary.nama
         : existing.nama;
 
-    allMemory[userId] = {
-        ...existing,
-        nama: finalNama,
-        ringkasan: summary.ringkasan || existing.ringkasan,
-        fakta: Array.isArray(summary.fakta) ? summary.fakta : existing.fakta,
-    };
+        allMemory[userId] = {
+            ...existing,
+            nama: finalNama,
+            ringkasan: summary.ringkasan || existing.ringkasan,
+            fakta: Array.isArray(summary.fakta) ? summary.fakta : existing.fakta,
+        };
 
     fs.writeFileSync(filePath, JSON.stringify(allMemory, null, 2));
     console.log(`Ringkasan memori user ${userId} diperbarui Ollama. Nama: ${finalNama}`);
