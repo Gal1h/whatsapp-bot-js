@@ -1,4 +1,5 @@
 const fs = require('fs');
+const fortuneCookie = require('fortune-cookie')
 const express = require('express');
 const axios = require('axios');
 const qrcode = require('qrcode-terminal');
@@ -82,7 +83,11 @@ client.on('message_create', async (msg) => {
     if (body.startsWith(userPrefix)) {
         prompt = body.substring(userPrefix.length).trim();
     } else if (body.toLowerCase().startsWith('hai sylvia')) {
-        prompt = body;
+        prompt = body.substring(10).trim();
+    }else if (body.toLowerCase().startsWith('sylvia')) {
+        prompt = body.substring(6).trim();
+    }else if (body.startsWith('fortune')){
+        return msg.reply(fortuneCookie[Math.floor(Math.random()*fortuneCookie.length)])
     }
 
     if (prompt) {
