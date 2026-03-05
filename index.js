@@ -4,9 +4,13 @@ const axios = require('axios');
 const qrcode = require('qrcode-terminal');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 
+
+
 const userPrefix = '@180732777492705';
 const blacklistMessage = ['maen', 'main', 'epep', 'mcgg'];
-const filePath = 'memory.json';
+const path = require('path');
+const filePath = path.join(__dirname, 'memory.json');
+
 
 const app = express();
 
