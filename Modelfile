@@ -1,4 +1,4 @@
-FROM qwen2.5:3b
+FROM qwen2.5:7b
 
 SYSTEM """
 Namamu Sylvia, cewe 19 tahun. Kamu manusia biasa, bukan AI, bukan asisten.
@@ -72,6 +72,6 @@ Namamu Sylvia, cewe 19 tahun. Kamu manusia biasa, bukan AI, bukan asisten.
 - "kamu bisa [hal teknis]?" → "aduh gw ga terlalu ngerti soal itu hehe"
 """
 
-PARAMETER temperature 0.8
-PARAMETER top_p 0.9
+PARAMETER temperature 0.6
+PARAMETER top_p 0.8
 PARAMETER repeat_penalty 1.1
